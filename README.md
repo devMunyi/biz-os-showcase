@@ -1,56 +1,111 @@
-# BizOS — Case Study
+# BizOS
 
-A multi-tenant business operating system covering the full lifecycle: lead to invoice, hire to payslip, purchase to warehouse.
-
-**The source code for BizOS is private.** This page exists so the work can be reviewed without access to the repository — what was built, what it runs on, and which decisions are worth discussing.
+BizOS is a business operating system: one login where a company runs sales, money, stock, people and projects. It is built for small and mid-sized businesses in Kenya and East Africa — owners, finance staff, HR managers and the teams working under them.
 
 ## The problem
 
-Small and mid-sized businesses in East Africa either stitch together several tools or run Odoo/QuickBooks, neither of which handles local compliance natively. BizOS was built as a direct competitor to both, with Kenyan statutory rules treated as a first-class requirement rather than a plugin: M-Pesa payments, KRA PAYE bands, NSSF, SHIF and Housing Levy, KRA PIN fields, KES by default.
+Most small businesses end up running on a pile of disconnected things: a spreadsheet for invoices, a notebook for stock, a WhatsApp thread for leads, a separate payroll calculator, and an accountant who asks for numbers nobody can find. Nothing agrees with anything else. Month-end takes days. Statutory filings are guesswork. Nobody can answer "how much are we owed right now?" without an afternoon of work.
 
-## What it does
+The alternatives are foreign accounting packages that don't know what SHIF or the Housing Levy is, or heavy enterprise suites that take a consultant to set up.
 
-18 modules in one platform:
+BizOS replaces the pile. A quote becomes an invoice. A received purchase order raises stock. Approved payroll produces payslips and the files you need for compliance. The dashboard reflects all of it as it happens.
 
-- **Revenue** — CRM with a drag-and-drop pipeline, product catalog, quotes with one-click conversion to invoices, invoicing with partial payments and credit notes.
-- **Payments** — recorded via Stripe, Paystack, M-Pesa, bank transfer or manual, with gateway reference tracking per invoice.
-- **Supply** — multi-warehouse inventory with reorder alerts and full movement history, purchase orders with a receive-goods flow that writes stock movements automatically, light manufacturing (BOM + work orders).
-- **People** — employee records with statutory fields, departments, contracts, leave with balance accounting, attendance with overtime, and Kenyan payroll (PAYE / NSSF / SHIF / Housing Levy) through a Draft → Approved → Disbursed workflow.
-- **Operations** — projects with a kanban task board, milestones and billable time entries; a helpdesk with threaded conversations and internal notes; expense submission and approval.
-- **Finance & admin** — fixed assets with straight-line and declining-balance depreciation, P&L, aged receivables, cash flow and tax summary reports (all CSV-exportable), dashboard KPIs, org settings, team roles and invitations, subscription and billing.
+## What you can do with it
 
-Cross-cutting: print-to-PDF invoices, quotes and batch payslips; CSV exports for statutory and bank disbursement files; dark mode.
+**Customers and sales**
+- Keep contacts — companies and individuals — with tags, notes and a full activity history
+- Track leads on a drag-and-drop pipeline with value, probability and expected close date
+- Log calls, emails, meetings, tasks and notes against a contact
+- Record why deals were won or lost
+- Maintain a product and service catalogue with prices and tax rates
+- Build quotes with line items, discounts and tax, send them, and track draft/sent/accepted/declined/expired
+- Turn an accepted quote into an invoice in one click
 
-## Stack
+**Invoicing and payments**
+- Raise invoices with line items, discounts and VAT
+- Follow each invoice through draft, sent, part-paid, paid, overdue or voided
+- Record payments made by M-Pesa, card, bank transfer or cash, with reference numbers kept against the invoice
+- Issue credit notes
+- See outstanding balances and collection rates at a glance
+- Print or download quotes, invoices and payslips on your own branding
 
-- **Language / runtime:** TypeScript 5.7 on Bun 1.3
-- **Framework:** Next.js 16 (App Router)
-- **API:** tRPC v11, TanStack Query for server state
-- **Data:** Prisma 7 against Neon PostgreSQL (`@prisma/adapter-pg`)
-- **Auth:** Better Auth
-- **UI:** HeroUI, TailwindCSS v4 (CSS-first), Framer Motion, Lucide, react-hot-toast
-- **Forms / validation:** React Hook Form + Zod
-- **Services:** UploadThing (files), Resend (email), Inngest (background jobs), PostHog (analytics), Anthropic SDK (AI), Stripe / Paystack / M-Pesa
-- **Tooling:** Biome
+**Stock and purchasing**
+- Track stock across multiple warehouses
+- Set reorder points and get alerted when items run low
+- See every movement in and out, including transfers and manual adjustments with a reason attached
+- Keep a supplier directory
+- Raise purchase orders, send them, and receive goods line by line — stock updates as you receive
+- See what's ordered, what's arrived and what's still outstanding in value
 
-## Engineering decisions worth defending
+**People**
+- Employee records covering personal, employment and statutory details, including KRA PIN, NSSF and SHIF numbers and bank details
+- Departments, sub-departments, managers and job titles
+- Employment contracts and salary structures
+- Grant or revoke individual employee access to the system
 
-**1. Tenancy enforced at the API boundary, not in the UI.**
-Every record carries an `organizationId`, and access runs through a shared `orgProcedure` in tRPC that resolves the caller's org and role (`owner` / `admin` / `member`) before any handler executes. Isolation and role checks are one thing to audit rather than a rule repeated across eighteen modules and hundreds of screens.
+**Payroll (Kenya)**
+- Run monthly payroll with PAYE, NSSF, SHIF and Housing Levy calculated for you against current rules
+- Add recurring allowances and deductions per employee
+- Move a run through draft, approved and disbursed
+- Print a full batch of payslips, one per page
+- Export statutory returns and a bank disbursement file
 
-```ts
-// every module builds on this, so scoping is not a per-query decision
-export const orgProcedure = protectedProcedure.use(({ ctx, next }) =>
-  next({ ctx: { ...ctx, organizationId: ctx.session.activeOrganizationId } })
-);
-```
+**Leave and attendance**
+- Define leave types and entitlements
+- Employees request leave; managers approve or reject with notes
+- Balances deduct on approval and restore on cancellation; weekends are excluded automatically
+- Mark attendance for the whole team at once, or clock people in and out
+- Automatic late detection, worked hours and overtime
+- See who is in today
 
-**2. Notifications are computed, not stored.**
-The five alert types — overdue invoices, low stock, unresponded tickets, pending leave, pending payroll — are derived live from existing tables on a 60-second refresh, with no event queue, no notification table and no write path to keep in sync. It trades some query cost for the elimination of an entire class of stale-state bugs; the boundary where that trade stops paying is a reasonable interview conversation.
+**Projects**
+- Run a portfolio of projects with budget, client and owner
+- Task board with drag-and-drop columns, priorities, assignees, due dates and estimates
+- Milestones with completion tracking
+- Log time against a project or task and flag it billable
+- Billable vs non-billable summary per project
 
-**3. Financial batch jobs are idempotent by construction.**
-The monthly depreciation run skips periods it has already processed and caps each charge at the remaining depreciable value, so an asset can never fall below its salvage value regardless of how many times the job is triggered. Payroll and leave follow the same instinct: leave balances deduct on approval and restore on rejection or cancellation, so a retried or reversed action leaves the ledger intact.
+**Customer support**
+- Log tickets with priority, category and the customer they belong to
+- Numbered automatically, moved through open, in progress, waiting, resolved and closed
+- Threaded replies to the customer plus internal notes only your team sees
+- Assign tickets, track first response time, and get alerted to tickets nobody has answered
 
-## Live link
+**Manufacturing**
+- Define a bill of materials for anything you produce
+- Raise work orders from it with a planned quantity
+- See the components each order needs and track produced against planned
 
-None. The application is login-gated and multi-tenant, so there is no public demo to link to. Happy to walk through it live in an interview.
+**Assets**
+- Asset register with purchase cost, current value and accumulated depreciation
+- Straight-line or declining balance, by asset category
+- Run depreciation monthly for the whole register at once
+- Dispose or sell assets and keep the history
+
+**Expenses**
+- Staff submit expenses with category, amount, date and receipt
+- Approve or reject with notes; rejections require a reason
+- Track what's approved and what's still waiting to be reimbursed
+
+**Reports and dashboard**
+- Profit and loss over any date range
+- Aged receivables bucketed by how late they are
+- Cash flow month by month
+- Tax summary per period
+- Export any report
+- A home dashboard with revenue collected and outstanding, pipeline, tickets, projects, expenses and headcount, plus a live activity feed
+
+**Access**
+- Owner, admin and standard roles, so finance sees finance and staff see their own work
+
+## Who built it
+
+Designed and built end to end by one engineer — product definition, interface, workflows, compliance logic and release.
+
+## Source
+
+BizOS is a commercial product and the source code is private. Implementation detail is available on request and I'm happy to walk through it in an interview.
+
+## Access
+
+The application is login-gated; there is no public URL. Contact me for a guided demo.
